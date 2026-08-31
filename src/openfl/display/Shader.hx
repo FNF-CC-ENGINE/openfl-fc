@@ -124,6 +124,19 @@ import openfl.utils.ByteArray;
 class Shader
 {
 	/**
+		A callback invoked when a vertex or fragment shader fails to compile.
+
+		This hook intercepts OpenGL shader compilation errors and provides a 
+		pre-formatted error message aligned with the original user source code 
+		(excluding engine-generated `#version` and `#extension` directives).
+
+		@param errorMessage The formatted error string with adjusted line numbers and code snippets.
+		@param shaderType The type of shader that failed compilation (`"Vertex"` or `"Fragment"`).
+		@default `null`
+	**/
+	public static var onShaderError:(errorMessage:String, shaderType:String) -> Void = null;
+	
+	/**
 		The raw shader bytecode for this Shader instance.
 	**/
 	public var byteCode(null, default):ByteArray;
@@ -367,46 +380,63 @@ class Shader
 
 	@:noCompletion private function __logGLShaderInfo(isError:Bool, type:Int, infoLog:String, source:String):Void
 	{
+		if (!isError) return;
+
+		var isFragment = (type == __context.gl.FRAGMENT_SHADER);
+		var typeName = isFragment ? "Fragment" : "Vertex";
+		
 		var message = "";
 		var lines = source.split("\n");
 		var failingLine:String = null;
+
+		var nvidiaRegex = ~/^\d+\((\d+)\)\s*:\s*(.+)$/;
+		var amdRegex = ~/^\w+?:\s*\d+:(\d+):?\s*(.+)$/;
+
 		for (log in infoLog.split("\n"))
 		{
-			// ignore empty lines
 			if (__isEmptyLine.match(log)) continue;
 
-			// look for a line number
-			if (!__lineExtractor.match(log))
+			var lineNumber = -1;
+			var info = "";
+
+			if (nvidiaRegex.match(log)) 
 			{
-				// Could not find expected info, abort pretty formatting
+				lineNumber = Std.parseInt(nvidiaRegex.matched(1));
+				info = nvidiaRegex.matched(2);
+			} 
+			else if (amdRegex.match(log)) 
+			{
+				lineNumber = Std.parseInt(amdRegex.matched(1));
+				info = amdRegex.matched(2);
+			} 
+			else 
+			{
 				failingLine = log;
 				break;
 			}
 
-			var lineNumberStr = __lineExtractor.matched(1);
-			var lineNumber = Std.parseInt(lineNumberStr);
-			var info = __lineExtractor.matched(2);
-			if (lineNumber >= lines.length)
+			if (lineNumber > 0 && lineNumber <= lines.length)
 			{
-				// EOF errors will not have a valid line
-				message += '\n\n $lineNumber | $info';
+				var lineCode = StringTools.trim(lines[lineNumber - 1]);
+				var indent = StringTools.lpad("|", " ", Std.string(lineNumber).length + 3);
+				message += '\n\n $lineNumber | $lineCode\n$indent $info';
 			}
-			else
+			else 
 			{
-				// Add the relevant line to each log
-				var line = lines[lineNumber - 1];
-				var indent = StringTools.lpad("|", " ", lineNumberStr.length + 3);
-				message += '\n\n $lineNumber | $line\n$indent ${info}';
+				message += '\n\n $lineNumber | $info';
 			}
 		}
 
-		// If we couldn't parse the logs, output the old, verbose format
-		if (failingLine != null) message = '\nFailed to simplify log:"$failingLine"\n$infoLog\n$source';
+		if (failingLine != null) message = '\nFailed to parse log: "$failingLine"\n$infoLog';
 
-		var typeName = (type == __context.gl.VERTEX_SHADER) ? "vertex" : "fragment";
-		if (isError) Log.error('Error compiling $typeName shader $message');
-		else
-			Log.debug('Info compiling $typeName shader $message');
+		if (onShaderError != null) 
+		{
+			onShaderError(message, typeName);
+		}
+		else 
+		{
+			Log.error('Error compiling $typeName shader $message');
+		}
 	}
 
 	@:noCompletion private function __createGLProgram(vertexSource:String, fragmentSource:String):GLProgram
@@ -436,7 +466,15 @@ class Shader
 		{
 			var message = "Unable to initialize the shader program";
 			message += "\n" + gl.getProgramInfoLog(program);
-			Log.error(message);
+			
+			if (onShaderError != null) 
+			{
+				Log.info(message);
+			}
+			else 
+			{
+				Log.error(message);
+			}
 		}
 
 		return program;

@@ -23,6 +23,7 @@ import openfl.display3D.textures.ASTCTexture;
 import openfl.display3D.textures.CubeTexture;
 import openfl.display3D.textures.MultiBufferTexture;
 import openfl.display3D.textures.RectangleTexture;
+import openfl.display3D.textures.S3TCTexture;
 import openfl.display3D.textures.Texture;
 import openfl.display3D.textures.TextureBase;
 import openfl.display3D.textures.VideoTexture;
@@ -129,6 +130,7 @@ import openfl.utils.ByteArray;
 @:access(openfl.display3D.textures.CubeTexture)
 @:access(openfl.display3D.textures.RectangleTexture)
 @:access(openfl.display3D.textures.TextureBase)
+@:access(openfl.display3D.textures.S3TCTexture)
 @:access(openfl.display3D.textures.Texture)
 @:access(openfl.display3D.textures.VideoTexture)
 @:access(openfl.display3D.IndexBuffer3D)
@@ -588,13 +590,11 @@ import openfl.utils.ByteArray;
 	public function configureBackBuffer(width:Int, height:Int, antiAlias:Int, enableDepthAndStencil:Bool = true, wantsBestResolution:Bool = false,
 			wantsBestResolutionOnBrowserZoom:Bool = false):Void
 	{
-		#if !openfl_dpi_aware
 		if (wantsBestResolution)
 		{
 			width = Std.int(width * __stage.window.scale);
 			height = Std.int(height * __stage.window.scale);
 		}
-		#end
 
 		if (__stage3D == null)
 		{
@@ -621,13 +621,9 @@ import openfl.utils.ByteArray;
 					__stage3D.__vertexBuffer = createVertexBuffer(4, 5);
 				}
 
-				#if openfl_dpi_aware
-				var scaledWidth = width;
-				var scaledHeight = height;
-				#else
 				var scaledWidth = wantsBestResolution ? width : Std.int(width * __stage.window.scale);
 				var scaledHeight = wantsBestResolution ? height : Std.int(height * __stage.window.scale);
-				#end
+
 				var vertexData:Array<Float> = [
 					scaledWidth,
 					scaledHeight,
@@ -989,6 +985,39 @@ import openfl.utils.ByteArray;
 	public function createASTCTexture(data:ByteArray):ASTCTexture
 	{
 		return new ASTCTexture(this, data);
+	}
+
+	/**
+		Checks whether S3TC (DXT1, DXT3, DXT5) texture compression is supported on this Context3D instance.
+
+		@return `true` if S3TC textures can be used on this device, `false` otherwise.
+	**/
+	public function isS3TCSupported():Bool
+	{
+		if (S3TCTexture.__s3tcCompressedTexturesSupported == null)
+		{
+			S3TCTexture.__s3tcCompressedTexturesSupported = gl.getSupportedExtensions().contains("EXT_texture_compression_s3tc");
+		}
+
+		return S3TCTexture.__s3tcCompressedTexturesSupported == true;
+	}
+
+	/**
+		Creates a new S3TCTexture instance from S3TC-compressed data.
+
+		You must check `isS3TCSupported()` before calling this method.
+
+		@param data A ByteArray containing S3TC-compressed texture data.
+		@return An `S3TCTexture` ready for use in rendering.
+
+		@throws IllegalOperationError If S3TC is not supported on this device (missing extension).
+		@throws IllegalOperationError If the S3TC signature in `data` is invalid.
+		@throws IllegalOperationError If the S3TC compression format is not supported.
+		@throws IllegalOperationError If the S3TC file is too short for header + blocks.
+	**/
+	public function createS3TCTexture(data:ByteArray):S3TCTexture
+	{
+		return new S3TCTexture(this, data);
 	}
 
 	/**
@@ -2101,14 +2130,38 @@ import openfl.utils.ByteArray;
 
 	@:noCompletion private function __bindGLTexture2D(texture:GLTexture):Void
 	{
-		// TODO: Need to consider activeTexture ID
+		var unit = __contextState.__currentGLActiveTexture;
+		var bound = __contextState.__currentGLTexture2DPerUnit;
 
-		// if (#if openfl_disable_context_cache true #else __contextState.__currentGLTexture2D != texture #end) {
+		if (#if openfl_disable_context_cache true #else bound[unit] != texture #end)
+		{
+			gl.bindTexture(gl.TEXTURE_2D, texture);
+			bound[unit] = texture;
+		}
 
-		gl.bindTexture(gl.TEXTURE_2D, texture);
 		__contextState.__currentGLTexture2D = texture;
+	}
 
-		// }
+	@:noCompletion private function __setGLActiveTexture(unit:Int):Void
+	{
+		if (#if openfl_disable_context_cache true #else __contextState.__currentGLActiveTexture != unit #end)
+		{
+			gl.activeTexture(gl.TEXTURE0 + unit);
+			__contextState.__currentGLActiveTexture = unit;
+		}
+	}
+
+	@:noCompletion private function __invalidateGLTexture2D(texture:GLTexture):Void
+	{
+		if (texture == null) return;
+
+		var bound = __contextState.__currentGLTexture2DPerUnit;
+		for (i in 0...bound.length)
+		{
+			if (bound[i] == texture) bound[i] = null;
+		}
+
+		if (__contextState.__currentGLTexture2D == texture) __contextState.__currentGLTexture2D = null;
 	}
 
 	@:noCompletion private function __bindGLTextureCubeMap(texture:GLTexture):Void
@@ -2425,7 +2478,7 @@ import openfl.utils.ByteArray;
 			var scissorY = Std.int(__state.scissorRectangle.y);
 			var scissorWidth = Std.int(__state.scissorRectangle.width);
 			var scissorHeight = Std.int(__state.scissorRectangle.height);
-			#if !openfl_dpi_aware
+
 			if (__backBufferWantsBestResolution)
 			{
 				scissorX = Std.int(__state.scissorRectangle.x * __stage.window.scale);
@@ -2433,7 +2486,6 @@ import openfl.utils.ByteArray;
 				scissorWidth = Std.int(__state.scissorRectangle.width * __stage.window.scale);
 				scissorHeight = Std.int(__state.scissorRectangle.height * __stage.window.scale);
 			}
-			#end
 
 			if (__state.renderToTexture == null && __stage3D == null)
 			{
@@ -2501,7 +2553,7 @@ import openfl.utils.ByteArray;
 				samplerState = __state.samplerStates[i];
 			}
 
-			gl.activeTexture(gl.TEXTURE0 + sampler);
+			__setGLActiveTexture(sampler);
 
 			if (texture != null)
 			{
@@ -2536,7 +2588,7 @@ import openfl.utils.ByteArray;
 
 			if (__state.program != null && __state.program.__format == AGAL && samplerState.textureAlpha)
 			{
-				gl.activeTexture(gl.TEXTURE0 + sampler + 4);
+				__setGLActiveTexture(sampler + 4);
 
 				__bindGLTexture2D(null);
 				if (__state.program.__agalAlphaSamplerEnabled[sampler] != null)
@@ -2549,30 +2601,46 @@ import openfl.utils.ByteArray;
 		}
 	}
 
+	@:noCompletion private function __setGLViewport(x:Int, y:Int, width:Int, height:Int):Void
+	{
+		var state = __contextState;
+		if (#if openfl_disable_context_cache false #else state.__currentGLViewportWidth == width
+			&& state.__currentGLViewportHeight == height
+			&& state.__currentGLViewportX == x
+			&& state.__currentGLViewportY == y #end)
+		{
+			return;
+		}
+
+		gl.viewport(x, y, width, height);
+		state.__currentGLViewportX = x;
+		state.__currentGLViewportY = y;
+		state.__currentGLViewportWidth = width;
+		state.__currentGLViewportHeight = height;
+	}
+
 	@:noCompletion private function __flushGLViewport():Void
 	{
-		// TODO: Cache
-
 		if (__state.renderToTexture == null)
 		{
 			if (__stage.context3D == this)
 			{
 				var scaledBackBufferWidth = backBufferWidth;
 				var scaledBackBufferHeight = backBufferHeight;
-				#if !openfl_dpi_aware
+
 				if (__stage3D == null && !__backBufferWantsBestResolution)
 				{
 					scaledBackBufferWidth = Std.int(backBufferWidth * __stage.window.scale);
 					scaledBackBufferHeight = Std.int(backBufferHeight * __stage.window.scale);
 				}
-				#end
+
 				var x = __stage3D == null ? 0 : Std.int(__stage3D.x);
 				var y = Std.int((__stage.window.height * __stage.window.scale) - scaledBackBufferHeight - (__stage3D == null ? 0 : __stage3D.y));
-				gl.viewport(x, y, scaledBackBufferWidth, scaledBackBufferHeight);
+				__setGLViewport(x, y, scaledBackBufferWidth, scaledBackBufferHeight);
 			}
 			else
 			{
-				gl.viewport(0, 0, backBufferWidth, backBufferHeight);
+				__setGLViewport(0, 0, backBufferWidth, backBufferHeight);
 			}
 		}
 		else
@@ -2605,7 +2673,7 @@ import openfl.utils.ByteArray;
 				height = multiBufferTexture.__height;
 			}
 
-			gl.viewport(0, 0, width, height);
+			__setGLViewport(0, 0, width, height);
 		}
 	}
 

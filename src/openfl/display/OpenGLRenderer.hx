@@ -52,8 +52,8 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	@:noCompletion private static var __complexBlendsSupported:Null<Bool>;
 	@:noCompletion private static var __coherentBlendsSupported:Null<Bool>;
 	@:noCompletion private static var __sRGBWriteControlSupported:Null<Bool>;
-	@:noCompletion private static var __drawBuffersARB:Null<Bool>;
 	@:noCompletion private static var __drawBuffersEXT:Null<Bool>;
+	@:noCompletion private static var __drawBuffersARB:Null<Bool>;
 
 	@:noCompletion private static var __alphaValue:Array<Float> = [1];
 	@:noCompletion private static var __colorMultipliersValue:Array<Float> = [0, 0, 0, 0];
@@ -196,13 +196,13 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		{
 			__standardDerivativesSupported = exts.contains("OES_standard_derivatives");
 		}
-		if (__drawBuffersARB == null)
-		{
-			__drawBuffersARB = exts.contains("ARB_draw_buffers");
-		}
 		if (__drawBuffersEXT == null)
 		{
 			__drawBuffersEXT = exts.contains("EXT_draw_buffers");
+		}
+		if (__drawBuffersARB == null)
+		{
+			__drawBuffersARB = exts.contains("ARB_draw_buffers");
 		}
 
 		#if (js && html5)
@@ -451,6 +451,12 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	public function setViewport():Void
 	{
 		__gl.viewport(__offsetX, __offsetY, __displayWidth, __displayHeight);
+
+		// bypass the viewport cache in Context3D to ensure that the GL viewport is always updated
+		if (__context3D != null)
+		{
+			@:privateAccess __context3D.__contextState.__currentGLViewportWidth = -1;
+		}
 	}
 
 	/**
@@ -847,9 +853,6 @@ class OpenGLRenderer extends DisplayObjectRenderer
 
 		if (__defaultRenderTarget == null)
 		{
-			#if openfl_dpi_aware
-			__scissorRectangle.setTo(__offsetX, __offsetY, __displayWidth, __displayHeight);
-			#else
 			if (__context3D.__backBufferWantsBestResolution)
 			{
 				__scissorRectangle.setTo(__offsetX / __pixelRatio, __offsetY / __pixelRatio, __displayWidth / __pixelRatio, __displayHeight / __pixelRatio);
@@ -858,7 +861,7 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			{
 				__scissorRectangle.setTo(__offsetX, __offsetY, __displayWidth, __displayHeight);
 			}
-			#end
+
 			__context3D.setScissorRectangle(__scissorRectangle);
 
 			__upscaled = (__worldTransform.a != 1 || __worldTransform.d != 1);
@@ -918,9 +921,6 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		}
 		else
 		{
-			#if openfl_dpi_aware
-			__scissorRectangle.setTo(__offsetX, __offsetY, __displayWidth, __displayHeight);
-			#else
 			if (__context3D.__backBufferWantsBestResolution)
 			{
 				__scissorRectangle.setTo(__offsetX / __pixelRatio, __offsetY / __pixelRatio, __displayWidth / __pixelRatio, __displayHeight / __pixelRatio);
@@ -929,7 +929,7 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			{
 				__scissorRectangle.setTo(__offsetX, __offsetY, __displayWidth, __displayHeight);
 			}
-			#end
+
 			__context3D.setScissorRectangle(__scissorRectangle);
 			// __gl.viewport (__offsetX, __offsetY, __displayWidth, __displayHeight);
 
@@ -1094,7 +1094,7 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			var y = Math.ffloor(clipRect.y);
 			var width = (clipRect.width > 0 ? Math.fceil(clipRect.right) - x : 0);
 			var height = (clipRect.height > 0 ? Math.fceil(clipRect.bottom) - y : 0);
-			#if !openfl_dpi_aware
+
 			if (__context3D.__backBufferWantsBestResolution)
 			{
 				var uv = 1.5 / __pixelRatio;
@@ -1103,7 +1103,6 @@ class OpenGLRenderer extends DisplayObjectRenderer
 				width = (clipRect.width > 0 ? (clipRect.right / __pixelRatio) - x + uv : 0);
 				height = (clipRect.height > 0 ? (clipRect.bottom / __pixelRatio) - y + uv : 0);
 			}
-			#end
 
 			if (width < 0) width = 0;
 			if (height < 0) height = 0;

@@ -1,44 +1,44 @@
 package openfl.display3D.textures;
 
 import openfl.display3D.Context3D;
-import openfl.display3D._internal.ASTCReader;
+import openfl.display3D._internal.S3TCReader;
 import openfl.errors.IllegalOperationError;
 import openfl.utils.ByteArray;
 
 using StringTools;
 
 /**
-	The ASTCTexture class represents a 2-dimensional texture using ASTC (Adaptive Scalable Texture Compression) for use in a rendering context.
+	The S3TCTexture class represents a 2-dimensional texture using S3TC (DXT1, DXT3, DXT5) compression for use in a rendering context.
 
-	ASTC compression provides high-quality textures with reduced memory usage, but it requires hardware support for the "KHR_texture_compression_astc_ldr" extension.
+	S3TC compression provides high-quality textures with reduced memory usage, but it requires hardware support for the "EXT_texture_compression_s3tc" extension.
 
-	ASTCTexture cannot be instantiated directly. Create instances by using Context3D
-	`createASTCTexture()` method.
+	S3TCTexture cannot be instantiated directly. Create instances by using Context3D
+	`createS3TCTexture()` method.
 **/
 @:access(openfl.display3D.Context3D)
-@:final class ASTCTexture extends TextureBase
+@:final class S3TCTexture extends TextureBase
 {
-	@:noCompletion private static var __astcCompressedTexturesSupported:Null<Bool>;
+	@:noCompletion private static var __s3tcCompressedTexturesSupported:Null<Bool>;
 
 	@:noCompletion private function new(context:Context3D, data:ByteArray):Void
 	{
 		super(context);
 
-		final extension:Null<Dynamic> = __context.gl.getExtension("KHR_texture_compression_astc_ldr");
+		final extension:Null<Dynamic> = __context.gl.getExtension("EXT_texture_compression_s3tc");
 
 		if (extension == null)
 		{
-			throw new IllegalOperationError("ASTC texture compression is not supported on this device (missing GL extension: GL_KHR_texture_compression_astc_ldr).");
+			throw new IllegalOperationError("S3TC texture compression is not supported on this device (missing GL extension: EXT_texture_compression_s3tc).");
 		}
 
-		var reader:ASTCReader = new ASTCReader(data);
+		var reader:S3TCReader = new S3TCReader(data);
 
 		{
-			final format:Null<Int> = Reflect.field(extension, 'COMPRESSED_RGBA_ASTC_${reader.blockX}x${reader.blockY}_KHR');
+			final format:Null<Int> = Reflect.field(extension, 'COMPRESSED_RGBA_S3TC_${reader.formatName}_EXT');
 
 			if (format == null)
 			{
-				throw new IllegalOperationError('ASTC format ${reader.blockX}x${reader.blockY} is not supported on this device (GL extension KHR_texture_compression_astc_ldr is present, but this block size is missing).');
+				throw new IllegalOperationError('S3TC format ${reader.formatName} is not supported on this device.');
 			}
 
 			__textureTarget = __context.gl.TEXTURE_2D;

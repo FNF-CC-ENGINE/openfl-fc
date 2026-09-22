@@ -388,13 +388,6 @@ class Stage extends DisplayObjectContainer implements IModule
 	**/
 	public var displayState(get, set):StageDisplayState;
 
-	#if commonjs
-	/**
-		The parent HTML element where this Stage is embedded.
-	**/
-	public var element:Element;
-	#end
-
 	/**
 		The interactive object with keyboard focus; or `null` if focus
 		is not set or if the focused object belongs to a security sandbox to which
@@ -818,9 +811,6 @@ class Stage extends DisplayObjectContainer implements IModule
 	@:noCompletion private var __colorString:String;
 	@:noCompletion private var __contentsScaleFactor:Float;
 	@:noCompletion private var __currentTabOrderIndex:Int;
-	#if (commonjs && !nodejs)
-	@:noCompletion private var __cursor:LimeMouseCursor;
-	#end
 	@:noCompletion private var __deltaTime:Float;
 	@:noCompletion private var __dirty:Bool;
 	@:noCompletion private var __displayMatrix:Matrix;
@@ -831,7 +821,6 @@ class Stage extends DisplayObjectContainer implements IModule
 	@:noCompletion private var __dragOffsetX:Float;
 	@:noCompletion private var __dragOffsetY:Float;
 	@:noCompletion private var __focus:InteractiveObject;
-	@:noCompletion private var __forceRender:Bool;
 	@:noCompletion private var __fullscreen:Bool;
 	@:noCompletion private var __fullScreenSourceRect:Rectangle;
 	@:noCompletion private var __invalidated:Bool;
@@ -866,8 +855,7 @@ class Stage extends DisplayObjectContainer implements IModule
 	@:noCompletion private var __primaryTouch:Touch;
 	@:noCompletion private var __oldStageOrientation:StageOrientation = UNKNOWN;
 
-	public function new(#if commonjs width:Dynamic = 0, height:Dynamic = 0, color:Null<Int> = null, documentClass:Class<Dynamic> = null,
-		windowAttributes:Dynamic = null #else window:Window, color:Null<Int> = null #end)
+	public function new(window:Window, color:Null<Int> = null)
 	{
 		super();
 
@@ -916,7 +904,6 @@ class Stage extends DisplayObjectContainer implements IModule
 		#end
 
 		__clearBeforeRender = true;
-		__forceRender = false;
 		__stack = [];
 		__rollOutStack = [];
 		__mouseOutStack = [];
@@ -931,79 +918,9 @@ class Stage extends DisplayObjectContainer implements IModule
 		// TODO: Do not rely on Lib.current
 		__uncaughtErrorEvents = Lib.current.__loaderInfo.uncaughtErrorEvents;
 
-		#if commonjs
-		if (windowAttributes == null) windowAttributes = {};
-		var app:OpenFLApplication = null;
-
-		if (!Math.isNaN(width))
-		{
-			var resizable = (width == 0 && width == 0);
-
-			#if (js && html5)
-			if (windowAttributes.element != null)
-			{
-				element = windowAttributes.element;
-			}
-			else
-			{
-				element = Browser.document.createElement("div");
-			}
-
-			if (resizable)
-			{
-				element.style.width = "100%";
-				element.style.height = "100%";
-			}
-			#else
-			element = null;
-			#end
-
-			windowAttributes.width = width;
-			windowAttributes.height = height;
-			windowAttributes.element = element;
-			windowAttributes.resizable = resizable;
-
-			windowAttributes.stage = this;
-
-			if (!Reflect.hasField(windowAttributes, "context")) windowAttributes.context = {};
-			var contextAttributes = windowAttributes.context;
-			if (Reflect.hasField(windowAttributes, "renderer"))
-			{
-				var type = Std.string(windowAttributes.renderer);
-				if (type == "webgl1")
-				{
-					contextAttributes.type = RenderContextType.WEBGL;
-					contextAttributes.version = "1";
-				}
-				else if (type == "webgl2")
-				{
-					contextAttributes.type = RenderContextType.WEBGL;
-					contextAttributes.version = "2";
-				}
-				else
-				{
-					Reflect.setField(contextAttributes, "type", windowAttributes.renderer);
-				}
-			}
-			if (!Reflect.hasField(contextAttributes, "stencil")) contextAttributes.stencil = true;
-			if (!Reflect.hasField(contextAttributes, "depth")) contextAttributes.depth = true;
-			if (!Reflect.hasField(contextAttributes, "background")) contextAttributes.background = null;
-
-			app = new OpenFLApplication();
-			window = app.createWindow(windowAttributes);
-
-			this.color = color;
-		}
-		else
-		{
-			this.window = cast width;
-			this.color = height;
-		}
-		#else
 		this.application = window.application;
 		this.window = window;
 		this.color = color;
-		#end
 
 		__contentsScaleFactor = window.scale;
 		__wasFullscreen = window.fullscreen;
@@ -1014,22 +931,6 @@ class Stage extends DisplayObjectContainer implements IModule
 		{
 			stage.addChild(Lib.current);
 		}
-
-		#if commonjs
-		if (documentClass != null)
-		{
-			DisplayObject.__initStage = this;
-			var sprite:Sprite = cast Type.createInstance(documentClass, []);
-			// addChild (sprite); // done by init stage
-			sprite.dispatchEvent(new Event(Event.ADDED_TO_STAGE, false, false));
-		}
-
-		if (app != null)
-		{
-			app.addModule(this);
-			app.exec();
-		}
-		#end
 	}
 
 	/**
@@ -1155,11 +1056,7 @@ class Stage extends DisplayObjectContainer implements IModule
 			case OPENGL, OPENGLES, WEBGL:
 				#if (!disable_cffi && (!html5 || !canvas))
 				context3D = new Context3D(this);
-				#if openfl_dpi_aware
-				context3D.configureBackBuffer(windowWidth, windowHeight, 0, true, true, true);
-				#else
 				context3D.configureBackBuffer(stageWidth, stageHeight, 0, true, true, true);
-				#end
 				context3D.present();
 				__renderer = new OpenGLRenderer(context3D);
 				#end
@@ -2089,7 +1986,7 @@ class Stage extends DisplayObjectContainer implements IModule
 
 		var event:Event = null;
 
-		var shouldRender = #if !openfl_disable_display_render (__renderer != null #if !openfl_always_render && (__renderDirty || __forceRender) #end) #else false #end;
+		var shouldRender = #if !openfl_disable_display_render (__renderer != null #if !openfl_always_render && __renderDirty #end) #else false #end;
 
 		if (__invalidated && shouldRender)
 		{
@@ -2532,15 +2429,6 @@ class Stage extends DisplayObjectContainer implements IModule
 		if (this.window == null || this.window != window) return;
 
 		__resize();
-
-		#if android
-		// workaround for newer behavior
-		__forceRender = true;
-		Lib.setTimeout(function()
-		{
-			__forceRender = false;
-		}, 500);
-		#end
 
 		if (__wasFullscreen && !window.fullscreen)
 		{
@@ -3381,15 +3269,10 @@ class Stage extends DisplayObjectContainer implements IModule
 		{
 			if (__logicalWidth == 0 || __logicalHeight == 0 || scaleMode == NO_SCALE || windowWidth == 0 || windowHeight == 0)
 			{
-				#if openfl_dpi_aware
-				stageWidth = windowWidth;
-				stageHeight = windowHeight;
-				#else
 				stageWidth = Math.round(windowWidth / window.scale);
 				stageHeight = Math.round(windowHeight / window.scale);
 
 				__displayMatrix.scale(window.scale, window.scale);
-				#end
 
 				__displayRect.setTo(0, 0, stageWidth, stageHeight);
 			}
@@ -3428,11 +3311,7 @@ class Stage extends DisplayObjectContainer implements IModule
 
 		if (context3D != null)
 		{
-			#if openfl_dpi_aware
-			context3D.configureBackBuffer(windowWidth, windowHeight, 0, true, true, true);
-			#else
 			context3D.configureBackBuffer(stageWidth, stageHeight, 0, true, true, true);
-			#end
 		}
 
 		for (stage3D in stage3Ds)

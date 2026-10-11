@@ -259,6 +259,7 @@ import openfl.utils.ByteArray;
 	@:noCompletion private static var __glTextureMaxAnisotropy:Int = -1;
 
 	@:noCompletion private var gl:WebGL2RenderContext;
+	@:noCompletion private var __backBufferDirty:Bool = true;
 	@:noCompletion private var __backBufferAntiAlias:Int;
 	@:noCompletion private var __backBufferTexture:RectangleTexture;
 	@:noCompletion private var __backBufferWantsBestResolution:Bool;
@@ -473,6 +474,7 @@ import openfl.utils.ByteArray;
 			{
 				if (__stage.context3D == this && !__stage.__renderer.__cleared) __stage.__renderer.__cleared = true;
 				__cleared = true;
+				if (__state.renderToTexture == null) __backBufferDirty = true;
 			}
 
 			clearMask |= gl.COLOR_BUFFER_BIT;
@@ -1323,6 +1325,8 @@ import openfl.utils.ByteArray;
 
 		__bindGLElementArrayBuffer(indexBuffer.__id);
 
+		if (__state.renderToTexture == null) __backBufferDirty = true;
+
 		gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, firstIndex * 2);
 	}
 
@@ -2104,30 +2108,59 @@ import openfl.utils.ByteArray;
 		}
 	}
 
-	@:noCompletion public function __copyRenderTarget(target:TextureBase, width:Int, height:Int, ?flush:Bool = true):Bool
+	@:noCompletion public function __copyRenderTarget(target:TextureBase, width:Int, height:Int):Bool
 	{
 		if (target == null || width <= 0 || height <= 0) return false;
 
-		final texture = target.__getTexture();
-		if (texture == null) return false;
+		__flushGLFramebuffer();
 
-		if (flush) __flushGLFramebuffer();
-		__setGLActiveTexture(0);
-		__bindGLTexture2D(texture);
-		gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+		final state = __contextState.renderToTexture != null ? __contextState : __state;
+		var bufferW:Int = width;
+		var bufferH:Int = height;
+		if (__contextState.renderToTexture != null)
+		{
+			bufferW = state.renderToTexture.__width;
+			bufferH = state.renderToTexture.__height;
+		}
 
-		return true;
+		return __blitToTexture(__contextState.__currentGLFramebuffer, bufferW, bufferH, target, width, height, __state.renderToTextureDepthStencil,
+			__state.renderToTextureAntiAlias, __state.renderToTextureSurfaceSelector);
 	}
 
-	@:noCompletion public inline function __copyBackBuffer(target:TextureBase, width:Int, height:Int):Bool
+	@:noCompletion public function __copyBackBuffer(target:TextureBase, width:Int, height:Int):Bool
+	{
+		if (target == null || width <= 0 || height <= 0) return false;
+
+		return __blitToTexture(__state.__primaryGLFramebuffer, backBufferWidth, backBufferHeight, target, width, height,
+			__state.backBufferEnableDepthAndStencil, __backBufferAntiAlias, 0);
+	}
+
+	@:noCompletion private function __blitToTexture(srcFramebuffer:GLFramebuffer, srcWidth:Int, srcHeight:Int, target:TextureBase, width:Int, height:Int,
+			enableDepthAndStencil:Bool, antiAlias:Int, surfaceSelector:Int):Bool
 	{
 		final cacheFB = __contextState.__currentGLFramebuffer;
-		__bindGLFramebuffer(__state.__primaryGLFramebuffer);
 
-		final res = __copyRenderTarget(target, width, height, false);
-		__bindGLFramebuffer(cacheFB);
+		final framebuffer = target.__getGLFramebuffer(enableDepthAndStencil, antiAlias, surfaceSelector);
+		if (framebuffer == null)
+		{
+			gl.bindFramebuffer(gl.FRAMEBUFFER, cacheFB);
+			__contextState.__currentGLFramebuffer = cacheFB;
+			return false;
+		}
 
-		return res;
+		final scissor = __contextState.__enableGLScissorTest;
+		if (scissor) gl.disable(gl.SCISSOR_TEST);
+
+		gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFramebuffer);
+		gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, framebuffer);
+		gl.blitFramebuffer(0, 0, srcWidth, srcHeight, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+
+		if (scissor) gl.enable(gl.SCISSOR_TEST);
+
+		gl.bindFramebuffer(gl.FRAMEBUFFER, cacheFB);
+		__contextState.__currentGLFramebuffer = cacheFB;
+
+		return true;
 	}
 
 	@:noCompletion private function __bindGLFramebuffer(framebuffer:GLFramebuffer):Void
@@ -2235,6 +2268,8 @@ import openfl.utils.ByteArray;
 		{
 			__state.program.__flush();
 		}
+
+		if (__state.renderToTexture == null) __backBufferDirty = true;
 
 		gl.drawArrays(gl.TRIANGLES, firstIndex, count);
 	}

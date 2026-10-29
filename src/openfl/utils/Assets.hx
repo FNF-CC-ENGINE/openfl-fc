@@ -328,12 +328,6 @@ class Assets
 		return null;
 	}
 
-	public static function getMusic(id:String, useCache:Bool = true):Sound
-	{
-		// TODO: Streaming sound
-		return getSound(id, useCache);
-	}
-
 	/**
 		Gets the file path (if available) for an asset
 

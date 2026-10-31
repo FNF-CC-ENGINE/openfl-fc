@@ -320,12 +320,40 @@ class Shader
 	**/
 	public function new(code:ByteArray = null)
 	{
+		__live.set(this, true);
 		byteCode = code;
 		precisionHint = FULL;
 
 		__glSourceDirty = true;
 		__numPasses = 1;
 		__data = new ShaderData(code);
+	}
+
+	@:noCompletion private static var __live:haxe.ds.WeakMap<Shader, Bool> = new haxe.ds.WeakMap();
+
+	@:noCompletion public static function __pruneUnusedPrograms(context:Context3D):Int
+	{
+		if (context == null || context.__programs == null) return 0;
+
+		var used = new haxe.ds.ObjectMap<Program3D, Bool>();
+		for (shader in __live.keys())
+		{
+			if (shader != null && shader.program != null) used.set(shader.program, true);
+		}
+
+		var removed = 0;
+		for (id in [for (key in context.__programs.keys()) key])
+		{
+			var program = context.__programs.get(id);
+			if (!used.exists(program))
+			{
+				context.__programs.remove(id);
+				program.dispose();
+				removed++;
+			}
+		}
+
+		return removed;
 	}
 
 	@:noCompletion private function __clearUseArray():Void
@@ -393,7 +421,6 @@ class Shader
 		
 		var message = "";
 		var lines = source.split("\n");
-		var failingLine:String = null;
 
 		var nvidiaRegex = ~/^\d+\((\d+)\)\s*:\s*(.+)$/;
 		var amdRegex = ~/^\w+?:\s*\d+:(\d+):?\s*(.+)$/;
@@ -415,25 +442,25 @@ class Shader
 				lineNumber = Std.parseInt(amdRegex.matched(1));
 				info = amdRegex.matched(2);
 			} 
-			else 
+			else
 			{
-				failingLine = log;
-				break;
+				message += '\n\n $log';
+				continue;
 			}
 
 			if (lineNumber > 0 && lineNumber <= lines.length)
 			{
-				var lineCode = StringTools.trim(lines[lineNumber - 1]);
 				var indent = StringTools.lpad("|", " ", Std.string(lineNumber).length + 3);
-				message += '\n\n $lineNumber | $lineCode\n$indent $info';
+				message += '\n\n';
+				for (n in Std.int(Math.max(1, lineNumber - 3))...Std.int(Math.min(lines.length, lineNumber + 2)) + 1)
+					message += ' ' + (n == lineNumber ? '>' : ' ') + ' $n | ${StringTools.trim(lines[n - 1])}\n';
+				message += '$indent $info';
 			}
 			else 
 			{
 				message += '\n\n $lineNumber | $info';
 			}
 		}
-
-		if (failingLine != null) message = '\nFailed to parse log: "$failingLine"\n$infoLog';
 
 		if (onShaderError != null) 
 		{
@@ -467,6 +494,9 @@ class Shader
 		gl.attachShader(program, vertexShader);
 		gl.attachShader(program, fragmentShader);
 		gl.linkProgram(program);
+
+		gl.deleteShader(vertexShader);
+		gl.deleteShader(fragmentShader);
 
 		if (gl.getProgramParameter(program, gl.LINK_STATUS) == 0)
 		{
@@ -586,12 +616,10 @@ class Shader
 	 */
 	@:noCompletion private function __needsGLES3Source(fragmentSource:String):Bool
 	{
-		#if js
-		if (__glVersion == "100" && __context.__context.version == "2") return true;
-		#end
 		if (__context.__context.type != OPENGLES) return false;
 		if (OpenGLRenderer.__drawBuffersEXT == true) return false;
 		if (Std.parseFloat(__context.__context.version) < 3) return false;
+		if (__glVersion == "100" && __context.__context.version == "2") return true;
 
 		return ~/gl_FragData\s*\[\s*[0-9]/.match(fragmentSource);
 	}
@@ -649,17 +677,19 @@ class Shader
 		src = ~/\bgl_FragColor\b/g.replace(src, "openfl_FragColorMain");
 
 		// Add the frag data write at the bottom of the main funciton
-		// use gl_FragData[0] only if it isn't a GraphicsShader
+		// use basic gl_FragColor if it isn't a GraphicsShader
 		var res:String = "vec4 openfl_FragColorMain = vec4(0.0, 0.0, 0.0, 0.0);\n";
 		res += src;
 		res += "\nvoid main()\n{\n";
 		res += "\topenfl_main();\n";
-		res += "\tgl_FragData[0] = openfl_FragColorMain;\n";
 		res += "#ifdef OPENFL_GRAPHICS_SHADER\n";
 		res += "\tif (sampleAttachment)\n{\n";
 		res += "\tgl_FragData[1] = openfl_FragColorMain;\n}\n";
 		res += "\telse\n{\n";
 		res += "\tgl_FragData[1] = vec4(0.0);\n}\n";
+		res += "\tgl_FragData[0] = openfl_FragColorMain;\n";
+		res += "#else\n";
+		res += "\tgl_FragColor = openfl_FragColorMain;\n";
 		res += "#endif\n";
 		res += "}\n";
 
@@ -725,6 +755,8 @@ class Shader
 		return prefix;
 	}
 
+	@:noCompletion private static var __sourceCache:Map<String, Map<String, {vertexSource:String, vertex:String, fragment:String, id:String}>> = new Map();
+
 	@:noCompletion private function __initGL():Void
 	{
 		if (__glSourceDirty || __paramBool == null)
@@ -749,13 +781,30 @@ class Shader
 
 			var vertex:String;
 			var fragment:String;
+			var id:String;
 
-			vertex = __buildSourcePrefix(false) + glVertexSource;
-			// do NOT mess with the frag data if the shader has it's own!
-			fragment = __buildSourcePrefix(true)
-				+ (~/gl_FragData\s*\[\s*[0-9]/.match(glFragmentSource) ? glFragmentSource : __applyFragData(glFragmentSource));
-
-			var id = vertex + fragment;
+			var cacheKey = Type.getClassName(Type.getClass(this)) + "|" + __glVersion + "|" + precisionHint;
+			var byFragment = __sourceCache.get(cacheKey);
+			if (byFragment == null)
+			{
+				byFragment = new Map();
+				__sourceCache.set(cacheKey, byFragment);
+			}
+			var cached = byFragment.get(glFragmentSource);
+			if (cached != null && cached.vertexSource == glVertexSource)
+			{
+				vertex = cached.vertex;
+				fragment = cached.fragment;
+				id = cached.id;
+			}
+			else
+			{
+				vertex = __buildSourcePrefix(false) + glVertexSource;
+				fragment = __buildSourcePrefix(true)
+					+ (~/gl_FragData\s*\[\s*[0-9]/.match(glFragmentSource) ? glFragmentSource : __applyFragData(glFragmentSource));
+				id = vertex + fragment;
+				byFragment.set(glFragmentSource, {vertexSource: glVertexSource, vertex: vertex, fragment: fragment, id: id});
+			}
 
 			if (__context.__programs.exists(id))
 			{

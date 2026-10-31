@@ -173,15 +173,30 @@ class GLSL3Converter
 		return true;
 	}
 
+	function collectMacroNames(source:String):Map<String, Bool>
+	{
+		final names:Map<String, Bool> = new Map<String, Bool>();
+		final define:EReg = ~/^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+		for (token in tokenize(source))
+		{
+			if (token.type == PREPROCESSOR_DIRECTIVE && define.match(token.data))
+				names.set(define.matched(1), true);
+		}
+
+		return names;
+	}
+
 	function renameReservedNames(source:String):String
 	{
 		final interfaceNames:Map<String, Bool> = collectInterfaceNames(source);
+		final macroNames:Map<String, Bool> = collectMacroNames(source);
 		final edits:Array<SourceEdit> = [];
 
 		for (token in tokenize(source))
 		{
 			if (token.type != IDENTIFIER && token.type != FIELD_SELECTION) continue;
-			if (!RESERVED_NAMES.exists(token.data) || interfaceNames.exists(token.data)) continue;
+			if (!RESERVED_NAMES.exists(token.data) || interfaceNames.exists(token.data) || macroNames.exists(token.data)) continue;
 			if (desktopSource && DESKTOP_BUILTINS.indexOf(token.data) != -1) continue;
 
 			edits.push(createEdit(token, token.data + "_"));

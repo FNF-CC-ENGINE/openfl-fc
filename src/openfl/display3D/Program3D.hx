@@ -572,6 +572,7 @@ import openfl.utils.ByteArray;
 
 		if (__glProgram != null)
 		{
+			gl.deleteProgram(__glProgram);
 			__glProgram = null;
 		}
 

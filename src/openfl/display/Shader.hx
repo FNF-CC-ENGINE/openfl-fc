@@ -689,7 +689,7 @@ class Shader
 		res += "\tgl_FragData[1] = vec4(0.0);\n}\n";
 		res += "\tgl_FragData[0] = openfl_FragColorMain;\n";
 		res += "#else\n";
-		res += "\tgl_FragColor = openfl_FragColorMain;\n";
+		res += "\tgl_FragData[0] = openfl_FragColorMain;\n";
 		res += "#endif\n";
 		res += "}\n";
 
